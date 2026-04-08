@@ -162,15 +162,18 @@ The file `inference.py` provides a **baseline agent** using the OpenAI Python SD
 
 ### Baseline Performance (Local Reproducible)
 
-You can run a deterministic local baseline without external LLM calls:
+Run baseline inference with the OpenAI client configured via required variables:
 
 ```bash
 cd cure_ai
-BASELINE_AGENT_MODE=heuristic ENV_BASE_URL=http://localhost:8000 python inference.py
+API_BASE_URL=https://router.huggingface.co/v1 \
+MODEL_NAME=meta-llama/Llama-3.1-8B-Instruct \
+HF_TOKEN=your_hf_token \
+ENV_BASE_URL=http://localhost:8000 \
+python inference.py
 ```
 
-This mode is for local reproducibility and smoke testing only.
-For hackathon submission, keep `BASELINE_AGENT_MODE` unset and provide `API_BASE_URL`, `MODEL_NAME`, and `HF_TOKEN`.
+`HF_TOKEN` is mandatory. `API_BASE_URL` and `MODEL_NAME` have defaults in `inference.py`, but you can override them explicitly.
 
 Latest local run (`run_id=20260408105351`) produced:
 - `task_easy`: total_reward `3.6856`, steps `5`

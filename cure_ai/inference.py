@@ -3,7 +3,7 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from openai import OpenAI
 
@@ -17,29 +17,16 @@ except ImportError:  # pragma: no cover
 
 
 def _load_env_config() -> Dict[str, str]:
-    agent_mode = os.environ.get("BASELINE_AGENT_MODE", "openai").strip().lower()
-    api_base = os.environ.get("API_BASE_URL")
-    model = os.environ.get("MODEL_NAME")
+    # Keep defaults only for API_BASE_URL and MODEL_NAME per checklist.
+    api_base = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
+    model = os.environ.get("MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct")
     hf_token = os.environ.get("HF_TOKEN")
-    if agent_mode == "heuristic":
-        return {
-            "agent_mode": "heuristic",
-            "api_base": api_base or "",
-            "model": model or "heuristic-baseline",
-            "hf_token": hf_token or "",
-        }
-
-    if not api_base or not model or not hf_token:
+    if not hf_token:
         missing: List[str] = []
-        if not api_base:
-            missing.append("API_BASE_URL")
-        if not model:
-            missing.append("MODEL_NAME")
         if not hf_token:
             missing.append("HF_TOKEN")
         raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
     return {
-        "agent_mode": "openai",
         "api_base": api_base,
         "model": model,
         "hf_token": hf_token,
@@ -109,32 +96,6 @@ def _llm_step(
     )
 
 
-def _heuristic_step(task_id: str, step: int) -> CureAiAction:
-    if task_id == "task_easy":
-        return CureAiAction(
-            task_id=task_id,
-            analysis="Database connection pool is exhausted causing timeout errors under peak traffic.",
-            fix="Tune connection pool size, reduce connection churn, and add exponential retry backoff.",
-            root_cause="db_pool",
-            done=step >= 1,
-        )
-    if task_id == "task_medium":
-        return CureAiAction(
-            task_id=task_id,
-            analysis="Cache is disabled and miss ratio spike is forcing traffic to origin, increasing latency.",
-            fix="Re-enable cache feature flag, invalidate stale keys, and warm critical cache entries.",
-            root_cause="cache_disabled",
-            done=step >= 1,
-        )
-    return CureAiAction(
-        task_id=task_id,
-        analysis="Authentication is failing due to JWT signature and clock skew inconsistencies.",
-        fix="Align JWT secret across services, sync clocks with NTP, and roll out auth config safely.",
-        root_cause="jwt_secret_mismatch",
-        done=step >= 1,
-    )
-
-
 def _emit_start(task_id: str, model: str, max_steps: int) -> None:
     print(
         "[START] "
@@ -167,9 +128,7 @@ def _emit_end(task_id: str, total_reward: float, steps: int, done: bool) -> None
 
 def main() -> None:
     config = _load_env_config()
-    client: Optional[OpenAI] = None
-    if config["agent_mode"] == "openai":
-        client = _build_client(config["api_base"], config["hf_token"])
+    client = _build_client(config["api_base"], config["hf_token"])
 
     results: List[Dict[str, float]] = []
     run_id = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -187,12 +146,7 @@ def main() -> None:
             _emit_start(task_id=task_id, model=config["model"], max_steps=obs.max_steps)
 
             for _step in range(obs.max_steps):
-                if config["agent_mode"] == "heuristic":
-                    action = _heuristic_step(task_id, obs.step)
-                else:
-                    if client is None:
-                        raise RuntimeError("OpenAI client was not initialized for openai mode")
-                    action = _llm_step(client, config["model"], task_id, obs)
+                action = _llm_step(client, config["model"], task_id, obs)
 
                 step_result = env.step(action)
                 obs = step_result.observation
@@ -215,7 +169,6 @@ def main() -> None:
 
     summary = {
         "run_id": run_id,
-        "agent_mode": config["agent_mode"],
         "model": config["model"],
         "episodes": results,
         "mean_reward": sum(r["total_reward"] for r in results) / len(results),
