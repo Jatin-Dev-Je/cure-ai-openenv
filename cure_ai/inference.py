@@ -155,6 +155,10 @@ def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, value))
 
 
+def _strict_open01(value: float, epsilon: float = 1e-6) -> float:
+    return max(epsilon, min(1.0 - epsilon, value))
+
+
 def main() -> None:
     config = _load_env_config()
     client = _build_client(config["api_base"], config["hf_token"])
@@ -200,7 +204,8 @@ def main() -> None:
                     break
 
             _emit_end(task_id=task_id, total_reward=total_reward, steps=obs.step, done=obs.done)
-            score = _clamp01(total_reward / max_total_reward) if max_total_reward > 0 else 0.0
+            raw_score = _clamp01(total_reward / max_total_reward) if max_total_reward > 0 else 0.0
+            score = _strict_open01(raw_score)
             results.append(
                 {
                     "task_id": task_id,
