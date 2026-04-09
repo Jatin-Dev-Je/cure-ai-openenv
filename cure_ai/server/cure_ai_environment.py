@@ -12,6 +12,7 @@ except ImportError:  # pragma: no cover
 
 
 EPSILON_SCORE = 1e-6
+GLOBAL_TASK_INDEX = 0
 
 
 @dataclass
@@ -142,12 +143,12 @@ class CureAiEnvironment(Environment):
         self._max_steps = max_steps
         self._state = State(episode_id="", step_count=0)
         self._task_cycle = ["task_easy", "task_medium", "task_hard"]
-        self._cycle_index = 0
         self._task_id = self._task_cycle[0]
 
     def reset(self) -> CureAiObservation:
-        self._task_id = self._task_cycle[self._cycle_index % len(self._task_cycle)]
-        self._cycle_index += 1
+        global GLOBAL_TASK_INDEX
+        self._task_id = self._task_cycle[GLOBAL_TASK_INDEX % len(self._task_cycle)]
+        GLOBAL_TASK_INDEX += 1
         spec = TASK_SPECS[self._task_id]
         self._state = State(episode_id=str(uuid4()), step_count=0)
 
