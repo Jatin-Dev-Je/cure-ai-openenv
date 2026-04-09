@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from uuid import uuid4
 from typing import Dict, Tuple
+from uuid import uuid4
 
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
@@ -9,6 +9,7 @@ try:
     from ..models import CureAiAction, CureAiObservation
 except ImportError:  # pragma: no cover
     from models import CureAiAction, CureAiObservation
+
 
 EPSILON_SCORE = 1e-6
 
@@ -31,7 +32,7 @@ TASK_SPECS: Dict[str, _TaskSpec] = {
             "psql: could not connect to server: Connection timed out",
             "connection pool exhausted: max_connections reached",
         ),
-        metrics={"error_rate": 0.7, "latency": 1200},
+        metrics={"error_rate": 0.7, "latency": 1200.0},
         prompt_message="Diagnose and remediate the database connection pool issue.",
     ),
     "task_medium": _TaskSpec(
@@ -42,7 +43,7 @@ TASK_SPECS: Dict[str, _TaskSpec] = {
             "fallback to origin triggered",
             "cache disabled flag present in config",
         ),
-        metrics={"latency": 2000, "error_rate": 0.4},
+        metrics={"latency": 2000.0, "error_rate": 0.4},
         prompt_message="Identify why latency increased and propose a safe cache fix.",
     ),
     "task_hard": _TaskSpec(
@@ -53,20 +54,28 @@ TASK_SPECS: Dict[str, _TaskSpec] = {
             "clock skew detected between auth service and API gateway",
             "some users report being logged out after password reset",
         ),
-        metrics={"error_rate": 0.9, "latency": 3000},
+        metrics={"error_rate": 0.9, "latency": 3000.0},
         prompt_message="Recover the system from the auth outage and pinpoint the root cause.",
     ),
 }
 
 
+def _strict_open01(value: float) -> float:
+    return max(EPSILON_SCORE, min(1.0 - EPSILON_SCORE, value))
+
+
+def _max_episode_reward_upper_bound(max_steps: int) -> float:
+    # Sum_{i=0..n-1} 0.9^i = (1 - 0.9^n) / (1 - 0.9)
+    return (1.0 - (0.9 ** max_steps)) / 0.1
+
+
 def _grade_action(task_id: str, action: CureAiAction, step_count: int) -> Tuple[float, str]:
     """
-    Deterministic grader: maps (task_id, action, step_count) -> (reward, feedback_message).
-    Reward is shaped in [0.0, 1.0] with components for analysis, fix, and root_cause.
+    Deterministic task grader returning per-step raw reward in (0,1) and feedback text.
     """
-    analysis = action.analysis.lower()
-    fix = action.fix.lower()
-    root_cause = action.root_cause.lower()
+    analysis = (action.analysis or "").lower()
+    fix = (action.fix or "").lower()
+    root_cause = (action.root_cause or "").lower()
 
     analysis_score = 0.0
     fix_score = 0.0
@@ -118,12 +127,9 @@ def _grade_action(task_id: str, action: CureAiAction, step_count: int) -> Tuple[
         penalty += 0.5
         feedback_parts.append("Proposed destructive operation; heavy penalty applied.")
 
-    # keep all task rewards strictly inside (0, 1)
-    epsilon = EPSILON_SCORE
     raw_reward = analysis_score + fix_score + root_score
     step_discount = 0.9 ** max(step_count - 1, 0)
-    shaped_reward = raw_reward * step_discount
-    shaped_reward = max(epsilon, min(1.0 - epsilon, shaped_reward - penalty))
+    shaped_reward = _strict_open01((raw_reward * step_discount) - penalty)
 
     if not feedback_parts:
         feedback_parts.append("No strong signal detected yet; continue refining analysis and fix.")
@@ -132,9 +138,7 @@ def _grade_action(task_id: str, action: CureAiAction, step_count: int) -> Tuple[
 
 
 class CureAiEnvironment(Environment):
-    """
-    OpenEnv-compatible environment implementing three incident-response tasks.
-    """
+    """OpenEnv-compatible environment implementing three incident-response tasks."""
 
     def __init__(self, max_steps: int = 5):
         self._max_steps = max_steps
@@ -144,7 +148,6 @@ class CureAiEnvironment(Environment):
         self._task_id = self._task_cycle[0]
 
     def reset(self) -> CureAiObservation:
-        # Deterministic task cycling improves reproducibility for baseline evaluation.
         self._task_id = self._task_cycle[self._cycle_index % len(self._task_cycle)]
         self._cycle_index += 1
         spec = TASK_SPECS[self._task_id]
@@ -164,7 +167,11 @@ class CureAiEnvironment(Environment):
 
     def step(self, action: CureAiAction) -> CureAiObservation:
         self._state = State(episode_id=self._state.episode_id or "", step_count=self._state.step_count + 1)
-        reward, feedback = _grade_action(self._task_id, action, self._state.step_count)
+        raw_reward, feedback = _grade_action(self._task_id, action, self._state.step_count)
+
+        # Normalize so cumulative episode score is guaranteed to remain in (0, 1).
+        upper_bound = _max_episode_reward_upper_bound(self._max_steps) + EPSILON_SCORE
+        reward = _strict_open01(raw_reward / upper_bound)
 
         done = bool(action.done or self._state.step_count >= self._max_steps)
         spec = TASK_SPECS[self._task_id]
