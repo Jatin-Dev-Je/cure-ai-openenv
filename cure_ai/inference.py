@@ -171,22 +171,22 @@ def main() -> None:
         expected_task_order = ["task_easy", "task_medium", "task_hard"]
         for expected_task_id in expected_task_order:
             reset_result = env.reset()
-            task_id = reset_result.observation.task_id
-            if task_id != expected_task_id:
-                print(f"[WARN] expected_task={expected_task_id} observed_task={task_id}", file=sys.stderr)
+            observed_task_id = reset_result.observation.task_id
+            if observed_task_id != expected_task_id:
+                print(f"[WARN] expected_task={expected_task_id} observed_task={observed_task_id}", file=sys.stderr)
 
             obs = reset_result.observation
             total_reward = 0.0
             max_total_reward = float(obs.max_steps)
-            _emit_start(task_id=task_id, model=config["model"], max_steps=obs.max_steps)
+            _emit_start(task_id=expected_task_id, model=config["model"], max_steps=obs.max_steps)
 
             for _step in range(obs.max_steps):
                 try:
-                    action = _llm_step(client, config["model"], task_id, obs)
+                    action = _llm_step(client, config["model"], observed_task_id, obs)
                 except Exception as e:
                     # Keep run alive and emit a traceable step line for evaluator logs.
-                    print(f"[WARN] llm_call_failed task_id={task_id} step={obs.step + 1} error={e}", file=sys.stderr)
-                    action = CureAiAction(task_id=task_id, analysis="", fix="", root_cause="", done=False)
+                    print(f"[WARN] llm_call_failed task_id={expected_task_id} step={obs.step + 1} error={e}", file=sys.stderr)
+                    action = CureAiAction(task_id=observed_task_id, analysis="", fix="", root_cause="", done=False)
 
                 step_result = env.step(action)
                 obs = step_result.observation
@@ -194,7 +194,7 @@ def main() -> None:
                 total_reward += reward
 
                 _emit_step(
-                    task_id=task_id,
+                    task_id=expected_task_id,
                     step=obs.step,
                     reward=reward,
                     done=obs.done,
@@ -206,10 +206,10 @@ def main() -> None:
 
             raw_score = _clamp01(total_reward / max_total_reward) if max_total_reward > 0 else 0.0
             score = float(f"{_strict_open01(raw_score):.6f}")
-            _emit_end(task_id=task_id, total_reward=total_reward, score=score, steps=obs.step, done=obs.done)
+            _emit_end(task_id=expected_task_id, total_reward=total_reward, score=score, steps=obs.step, done=obs.done)
             results.append(
                 {
-                    "task_id": task_id,
+                    "task_id": expected_task_id,
                     # Keep task score fields strictly open interval and parser-friendly decimals.
                     "total_reward": score,
                     "score": score,
