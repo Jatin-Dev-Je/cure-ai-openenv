@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+from pathlib import Path
+import tempfile
 from typing import Dict, Tuple
 from uuid import uuid4
 
@@ -12,7 +14,7 @@ except ImportError:  # pragma: no cover
 
 
 EPSILON_SCORE = 1e-6
-GLOBAL_TASK_INDEX = 0
+TASK_INDEX_FILE = Path(tempfile.gettempdir()) / "cure_ai_task_index.txt"
 
 
 @dataclass
@@ -69,6 +71,22 @@ def _max_episode_reward_upper_bound(max_steps: int) -> float:
     # Hard upper bound on cumulative reward across max_steps actions.
     # This remains safe even if request/session state is not preserved.
     return float(max_steps)
+
+
+def _next_task_index() -> int:
+    """Return a persistent global task index across stateless env instances."""
+    try:
+        current = int(TASK_INDEX_FILE.read_text(encoding="utf-8").strip())
+    except Exception:
+        current = 0
+
+    next_value = current + 1
+    try:
+        TASK_INDEX_FILE.write_text(str(next_value), encoding="utf-8")
+    except Exception:
+        # Non-fatal fallback: at worst rotation restarts if file write fails.
+        pass
+    return current
 
 
 def _grade_action(task_id: str, action: CureAiAction, step_count: int) -> Tuple[float, str]:
@@ -146,9 +164,8 @@ class CureAiEnvironment(Environment):
         self._task_id = self._task_cycle[0]
 
     def reset(self) -> CureAiObservation:
-        global GLOBAL_TASK_INDEX
-        self._task_id = self._task_cycle[GLOBAL_TASK_INDEX % len(self._task_cycle)]
-        GLOBAL_TASK_INDEX += 1
+        task_idx = _next_task_index()
+        self._task_id = self._task_cycle[task_idx % len(self._task_cycle)]
         spec = TASK_SPECS[self._task_id]
         self._state = State(episode_id=str(uuid4()), step_count=0)
 
