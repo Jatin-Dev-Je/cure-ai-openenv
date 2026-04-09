@@ -156,7 +156,7 @@ def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, value))
 
 
-def _strict_open01(value: float, epsilon: float = 1e-6) -> float:
+def _strict_open01(value: float, epsilon: float = 1e-3) -> float:
     return max(epsilon, min(1.0 - epsilon, value))
 
 
@@ -205,14 +205,13 @@ def main() -> None:
                     break
 
             raw_score = _clamp01(total_reward / max_total_reward) if max_total_reward > 0 else 0.0
-            score = _strict_open01(raw_score)
+            score = float(f"{_strict_open01(raw_score):.6f}")
             _emit_end(task_id=task_id, total_reward=total_reward, score=score, steps=obs.step, done=obs.done)
             results.append(
                 {
                     "task_id": task_id,
-                    # Keep score-like task fields strictly open interval for validators.
+                    # Keep task score fields strictly open interval and parser-friendly decimals.
                     "total_reward": score,
-                    "raw_total_reward": total_reward,
                     "score": score,
                     "task_score": score,
                     "steps": obs.step,
@@ -223,7 +222,7 @@ def main() -> None:
         "run_id": run_id,
         "model": config["model"],
         "episodes": results,
-        "mean_reward": sum(r["raw_total_reward"] for r in results) / len(results),
+        "mean_reward": sum(r["total_reward"] for r in results) / len(results),
         "mean_score": sum(r["score"] for r in results) / len(results),
     }
 
