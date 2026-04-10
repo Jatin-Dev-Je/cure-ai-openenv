@@ -203,8 +203,11 @@ class CureAiEnvironment(Environment):
         spec = TASK_SPECS[self._task_id]
 
         # Some validators may continue stepping after done=True.
-        # Keep terminal outputs deterministic and strictly in-range.
+        # Use a convergent positive tail to keep cumulative reward bounded
+        # even if validator calls step() after done.
         if self._episode_done:
+            self._post_done_calls += 1
+            tail_reward = EPSILON_SCORE / (2 ** self._post_done_calls)
             return CureAiObservation(
                 task_id=spec.task_id,
                 description=spec.description,
@@ -212,18 +215,18 @@ class CureAiEnvironment(Environment):
                 metrics=dict(spec.metrics),
                 step=self._state.step_count,
                 max_steps=self._max_steps,
-                reward=EPSILON_SCORE,
+                reward=tail_reward,
                 task_score=SAFE_TASK_SCORE,
                 done=True,
                 message="Episode already done. Call reset() for a new task.",
                 reward_breakdown={
-                    "analysis_score": EPSILON_SCORE,
-                    "fix_score": EPSILON_SCORE,
-                    "root_cause_score": EPSILON_SCORE,
+                    "analysis_score": tail_reward,
+                    "fix_score": tail_reward,
+                    "root_cause_score": tail_reward,
                     "step_discount": 1.0 - EPSILON_SCORE,
                     "unsafe_penalty": EPSILON_SCORE,
                     "loop_penalty": EPSILON_SCORE,
-                    "total": EPSILON_SCORE,
+                    "total": tail_reward,
                     "task_score": SAFE_TASK_SCORE,
                 },
             )
