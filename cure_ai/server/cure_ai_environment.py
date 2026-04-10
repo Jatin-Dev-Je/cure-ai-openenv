@@ -16,9 +16,8 @@ except ImportError:  # pragma: no cover
 # Keep epsilon large enough that 2-decimal formatting cannot collapse values
 # to 0.00 or 1.00 in downstream validators.
 EPSILON_SCORE = 1e-2
-SAFE_STEP_REWARD = 0.10
 SAFE_TASK_SCORE = 0.50
-POST_DONE_BASE_REWARD = 0.005
+MAX_STEP_REWARD = 0.19
 TASK_INDEX_FILE = Path(tempfile.gettempdir()) / "cure_ai_task_index.txt"
 
 
@@ -185,18 +184,18 @@ class CureAiEnvironment(Environment):
             metrics=dict(spec.metrics),
             step=0,
             max_steps=self._max_steps,
-            reward=SAFE_STEP_REWARD,
+            reward=EPSILON_SCORE,
             task_score=SAFE_TASK_SCORE,
             done=False,
             message=spec.prompt_message,
             reward_breakdown={
-                "analysis_score": SAFE_STEP_REWARD,
-                "fix_score": SAFE_STEP_REWARD,
-                "root_cause_score": SAFE_STEP_REWARD,
+                "analysis_score": EPSILON_SCORE,
+                "fix_score": EPSILON_SCORE,
+                "root_cause_score": EPSILON_SCORE,
                 "step_discount": 1.0 - EPSILON_SCORE,
                 "unsafe_penalty": EPSILON_SCORE,
                 "loop_penalty": EPSILON_SCORE,
-                "total": SAFE_STEP_REWARD,
+                "total": EPSILON_SCORE,
                 "task_score": SAFE_TASK_SCORE,
             },
         )
@@ -205,11 +204,11 @@ class CureAiEnvironment(Environment):
         spec = TASK_SPECS[self._task_id]
 
         # Some validators may continue stepping after done=True.
-        # Keep post-done rewards strictly inside (0,1) and stable so
-        # cumulative task reward remains bounded even with extra calls.
+        # Use a convergent positive tail so even extra post-done calls
+        # cannot push cumulative reward to 1.0.
         if self._episode_done:
             self._post_done_calls += 1
-            tail_reward = POST_DONE_BASE_REWARD / (2 ** (self._post_done_calls - 1))
+            tail_reward = EPSILON_SCORE / (self._post_done_calls * self._post_done_calls)
             return CureAiObservation(
                 task_id=spec.task_id,
                 description=spec.description,
@@ -236,7 +235,8 @@ class CureAiEnvironment(Environment):
         self._state = State(episode_id=self._state.episode_id or "", step_count=self._state.step_count + 1)
         raw_reward, feedback = _grade_action(self._task_id, action, self._state.step_count)
 
-        reward = SAFE_STEP_REWARD
+        upper_bound = _max_episode_reward_upper_bound(self._max_steps) + EPSILON_SCORE
+        reward = max(EPSILON_SCORE, min(MAX_STEP_REWARD, raw_reward / upper_bound))
 
         done = bool(action.done or self._state.step_count >= self._max_steps)
         self._episode_done = done
