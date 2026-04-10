@@ -17,6 +17,7 @@ except ImportError:  # pragma: no cover
 # to 0.00 or 1.00 in downstream validators.
 EPSILON_SCORE = 1e-2
 MAX_STEP_REWARD = 0.19
+MAX_EPISODE_SCORE = 0.99
 TASK_INDEX_FILE = Path(tempfile.gettempdir()) / "cure_ai_task_index.txt"
 
 
@@ -166,6 +167,7 @@ class CureAiEnvironment(Environment):
         self._task_cycle = ["task_easy", "task_medium", "task_hard"]
         self._task_id = self._task_cycle[0]
         self._episode_done = False
+        self._episode_cumulative_reward = 0.0
 
     def reset(self) -> CureAiObservation:
         task_idx = _next_task_index()
@@ -173,6 +175,7 @@ class CureAiEnvironment(Environment):
         spec = TASK_SPECS[self._task_id]
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self._episode_done = False
+        self._episode_cumulative_reward = 0.0
 
         return CureAiObservation(
             task_id=spec.task_id,
@@ -211,19 +214,19 @@ class CureAiEnvironment(Environment):
                 metrics=dict(spec.metrics),
                 step=self._state.step_count,
                 max_steps=self._max_steps,
-                reward=EPSILON_SCORE,
-                task_score=EPSILON_SCORE,
+                reward=0.0,
+                task_score=_strict_open01(self._episode_cumulative_reward),
                 done=True,
                 message="Episode already done. Call reset() for a new task.",
                 reward_breakdown={
-                    "analysis_score": EPSILON_SCORE,
-                    "fix_score": EPSILON_SCORE,
-                    "root_cause_score": EPSILON_SCORE,
+                    "analysis_score": 0.0,
+                    "fix_score": 0.0,
+                    "root_cause_score": 0.0,
                     "step_discount": 1.0 - EPSILON_SCORE,
-                    "unsafe_penalty": EPSILON_SCORE,
-                    "loop_penalty": EPSILON_SCORE,
-                    "total": EPSILON_SCORE,
-                    "task_score": EPSILON_SCORE,
+                    "unsafe_penalty": 0.0,
+                    "loop_penalty": 0.0,
+                    "total": 0.0,
+                    "task_score": _strict_open01(self._episode_cumulative_reward),
                 },
             )
 
@@ -231,7 +234,10 @@ class CureAiEnvironment(Environment):
         raw_reward, feedback = _grade_action(self._task_id, action, self._state.step_count)
 
         upper_bound = _max_episode_reward_upper_bound(self._max_steps) + EPSILON_SCORE
-        reward = min(_strict_open01(raw_reward / upper_bound), MAX_STEP_REWARD)
+        base_reward = min(_strict_open01(raw_reward / upper_bound), MAX_STEP_REWARD)
+        remaining_budget = max(0.0, MAX_EPISODE_SCORE - self._episode_cumulative_reward)
+        reward = min(base_reward, remaining_budget)
+        self._episode_cumulative_reward += reward
 
         done = bool(action.done or self._state.step_count >= self._max_steps)
         self._episode_done = done
@@ -244,7 +250,7 @@ class CureAiEnvironment(Environment):
             step=self._state.step_count,
             max_steps=self._max_steps,
             reward=reward,
-            task_score=reward,
+            task_score=_strict_open01(self._episode_cumulative_reward),
             done=done,
             message=feedback,
             reward_breakdown={
@@ -255,7 +261,7 @@ class CureAiEnvironment(Environment):
                 "unsafe_penalty": EPSILON_SCORE,
                 "loop_penalty": EPSILON_SCORE,
                 "total": reward,
-                "task_score": reward,
+                "task_score": _strict_open01(self._episode_cumulative_reward),
             },
         )
 
