@@ -13,7 +13,9 @@ except ImportError:  # pragma: no cover
     from models import CureAiAction, CureAiObservation
 
 
-EPSILON_SCORE = 1e-6
+# Keep a practical epsilon so downstream validators that round scores
+# still observe strictly positive values.
+EPSILON_SCORE = 1e-3
 TASK_INDEX_FILE = Path(tempfile.gettempdir()) / "cure_ai_task_index.txt"
 
 
