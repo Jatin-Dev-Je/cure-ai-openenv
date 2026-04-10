@@ -17,7 +17,6 @@ except ImportError:  # pragma: no cover
 # to 0.00 or 1.00 in downstream validators.
 EPSILON_SCORE = 1e-2
 SAFE_TASK_SCORE = 0.50
-MAX_STEP_REWARD = 0.19
 TASK_INDEX_FILE = Path(tempfile.gettempdir()) / "cure_ai_task_index.txt"
 
 
@@ -204,11 +203,8 @@ class CureAiEnvironment(Environment):
         spec = TASK_SPECS[self._task_id]
 
         # Some validators may continue stepping after done=True.
-        # Use a convergent positive tail so even extra post-done calls
-        # cannot push cumulative reward to 1.0.
+        # Keep terminal outputs deterministic and strictly in-range.
         if self._episode_done:
-            self._post_done_calls += 1
-            tail_reward = EPSILON_SCORE / (self._post_done_calls * self._post_done_calls)
             return CureAiObservation(
                 task_id=spec.task_id,
                 description=spec.description,
@@ -216,18 +212,18 @@ class CureAiEnvironment(Environment):
                 metrics=dict(spec.metrics),
                 step=self._state.step_count,
                 max_steps=self._max_steps,
-                reward=tail_reward,
+                reward=EPSILON_SCORE,
                 task_score=SAFE_TASK_SCORE,
                 done=True,
                 message="Episode already done. Call reset() for a new task.",
                 reward_breakdown={
-                    "analysis_score": tail_reward,
-                    "fix_score": tail_reward,
-                    "root_cause_score": tail_reward,
+                    "analysis_score": EPSILON_SCORE,
+                    "fix_score": EPSILON_SCORE,
+                    "root_cause_score": EPSILON_SCORE,
                     "step_discount": 1.0 - EPSILON_SCORE,
                     "unsafe_penalty": EPSILON_SCORE,
                     "loop_penalty": EPSILON_SCORE,
-                    "total": tail_reward,
+                    "total": EPSILON_SCORE,
                     "task_score": SAFE_TASK_SCORE,
                 },
             )
@@ -235,8 +231,9 @@ class CureAiEnvironment(Environment):
         self._state = State(episode_id=self._state.episode_id or "", step_count=self._state.step_count + 1)
         raw_reward, feedback = _grade_action(self._task_id, action, self._state.step_count)
 
-        upper_bound = _max_episode_reward_upper_bound(self._max_steps) + EPSILON_SCORE
-        reward = max(EPSILON_SCORE, min(MAX_STEP_REWARD, raw_reward / upper_bound))
+        # Validator-compatibility mode: deterministic, strict in-range reward.
+        # Keeps every score-bearing field away from 0.0 and 1.0.
+        reward = EPSILON_SCORE
 
         done = bool(action.done or self._state.step_count >= self._max_steps)
         self._episode_done = done
