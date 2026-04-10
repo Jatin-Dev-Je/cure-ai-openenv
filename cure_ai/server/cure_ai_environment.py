@@ -180,6 +180,7 @@ class CureAiEnvironment(Environment):
             step=0,
             max_steps=self._max_steps,
             reward=EPSILON_SCORE,
+            task_score=EPSILON_SCORE,
             done=False,
             message=spec.prompt_message,
             reward_breakdown={
@@ -212,6 +213,7 @@ class CureAiEnvironment(Environment):
             step=self._state.step_count,
             max_steps=self._max_steps,
             reward=reward,
+            task_score=reward,
             done=done,
             message=feedback,
             reward_breakdown={
