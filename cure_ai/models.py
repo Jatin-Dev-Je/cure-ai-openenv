@@ -38,7 +38,7 @@ class CureAiObservation(Observation):
     metrics: Dict[str, float] = Field(default_factory=dict)
     step: int = Field(default=0)
     max_steps: int = Field(default=5)
-    reward: float = Field(default=1e-2, ge=0.0, lt=1.0)
+    reward: float = Field(default=1e-2, gt=0.0, lt=1.0)
     task_score: float = Field(default=1e-2, gt=0.0, lt=1.0)
     done: bool = Field(default=False)
     message: str = Field(default="")
