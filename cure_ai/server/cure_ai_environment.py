@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover
 EPSILON_SCORE = 1e-2
 SAFE_STEP_REWARD = 0.10
 SAFE_TASK_SCORE = 0.50
+POST_DONE_BASE_REWARD = 0.005
 TASK_INDEX_FILE = Path(tempfile.gettempdir()) / "cure_ai_task_index.txt"
 
 
@@ -167,6 +168,7 @@ class CureAiEnvironment(Environment):
         self._task_cycle = ["task_easy", "task_medium", "task_hard"]
         self._task_id = self._task_cycle[0]
         self._episode_done = False
+        self._post_done_calls = 0
 
     def reset(self) -> CureAiObservation:
         task_idx = _next_task_index()
@@ -174,6 +176,7 @@ class CureAiEnvironment(Environment):
         spec = TASK_SPECS[self._task_id]
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self._episode_done = False
+        self._post_done_calls = 0
 
         return CureAiObservation(
             task_id=spec.task_id,
@@ -203,9 +206,10 @@ class CureAiEnvironment(Environment):
 
         # Some validators may continue stepping after done=True.
         # Keep post-done rewards strictly inside (0,1) and stable so
-        # validators cannot interpret late-step rewards as 0.0.
+        # cumulative task reward remains bounded even with extra calls.
         if self._episode_done:
-            tail_reward = EPSILON_SCORE
+            self._post_done_calls += 1
+            tail_reward = POST_DONE_BASE_REWARD / (2 ** (self._post_done_calls - 1))
             return CureAiObservation(
                 task_id=spec.task_id,
                 description=spec.description,
