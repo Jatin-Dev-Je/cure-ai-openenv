@@ -16,6 +16,7 @@ except ImportError:  # pragma: no cover
 # Keep epsilon large enough that 2-decimal formatting cannot collapse values
 # to 0.00 or 1.00 in downstream validators.
 EPSILON_SCORE = 1e-2
+MAX_STEP_REWARD = 0.19
 TASK_INDEX_FILE = Path(tempfile.gettempdir()) / "cure_ai_task_index.txt"
 
 
@@ -188,7 +189,7 @@ class CureAiEnvironment(Environment):
         raw_reward, feedback = _grade_action(self._task_id, action, self._state.step_count)
 
         upper_bound = _max_episode_reward_upper_bound(self._max_steps) + EPSILON_SCORE
-        reward = _strict_open01(raw_reward / upper_bound)
+        reward = min(_strict_open01(raw_reward / upper_bound), MAX_STEP_REWARD)
 
         done = bool(action.done or self._state.step_count >= self._max_steps)
         spec = TASK_SPECS[self._task_id]
