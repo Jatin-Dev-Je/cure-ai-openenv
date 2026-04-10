@@ -3,7 +3,7 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from openai import OpenAI
 
@@ -121,34 +121,40 @@ def _llm_step(
     )
 
 
-def _emit_start(task_id: str, model: str, max_steps: int) -> None:
-    print(
-        "[START] "
-        f"task_id={task_id} "
-        f"model={model} "
-        f"max_steps={max_steps}"
+def _emit_start(task_name: str, benchmark: str, model: str) -> None:
+    print(f"[START] task={task_name} env={benchmark} model={model}")
+
+
+def _format_action_str(action: CureAiAction) -> str:
+    action_str = (
+        f"analysis={action.analysis}"
+        f";fix={action.fix}"
+        f";root_cause={action.root_cause}"
+        f";done={str(action.done).lower()}"
     )
+    # Keep each log line single-line for parser safety.
+    return action_str.replace("\n", " ").strip()
 
 
-def _emit_step(task_id: str, step: int, reward: float, done: bool, root_cause: str) -> None:
+def _emit_step(step: int, action: CureAiAction, reward: float, done: bool, error: Optional[str]) -> None:
+    error_value = "null" if not error else str(error).replace("\n", " ")
     print(
         "[STEP] "
-        f"task_id={task_id} "
         f"step={step} "
-        f"reward={reward:.6f} "
+        f"action={_format_action_str(action)} "
+        f"reward={reward:.2f} "
         f"done={str(done).lower()} "
-        f"root_cause={root_cause}"
+        f"error={error_value}"
     )
 
 
-def _emit_end(task_id: str, total_reward: float, score: float, steps: int, done: bool) -> None:
+def _emit_end(success: bool, steps: int, rewards: List[float]) -> None:
+    rewards_csv = ",".join(f"{_strict_open01(r):.2f}" for r in rewards)
     print(
         "[END] "
-        f"task_id={task_id} "
-        f"total_reward={total_reward:.6f} "
-        f"task_score={score:.6f} "
+        f"success={str(success).lower()} "
         f"steps={steps} "
-        f"done={str(done).lower()}"
+        f"rewards={rewards_csv}"
     )
 
 
@@ -167,56 +173,70 @@ def main() -> None:
     results: List[Dict[str, float]] = []
     run_id = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     env_base_url = os.environ.get("ENV_BASE_URL", "http://localhost:8000")
-    with CureAiEnv(base_url=env_base_url).sync() as env:
-        expected_task_order = ["task_easy", "task_medium", "task_hard"]
-        for expected_task_id in expected_task_order:
-            reset_result = env.reset()
-            observed_task_id = reset_result.observation.task_id
-            if observed_task_id != expected_task_id:
-                print(f"[WARN] expected_task={expected_task_id} observed_task={observed_task_id}", file=sys.stderr)
+    expected_task_order = ["task_easy", "task_medium", "task_hard"]
+    benchmark = "cure_ai"
+    for expected_task_id in expected_task_order:
+        rewards: List[float] = []
+        task_steps = 0
+        task_done = False
+        task_error: Optional[str] = None
 
-            obs = reset_result.observation
-            total_reward = 0.0
-            max_total_reward = float(obs.max_steps)
-            _emit_start(task_id=expected_task_id, model=config["model"], max_steps=obs.max_steps)
+        _emit_start(task_name=expected_task_id, benchmark=benchmark, model=config["model"])
 
-            for _step in range(obs.max_steps):
-                try:
-                    action = _llm_step(client, config["model"], observed_task_id, obs)
-                except Exception as e:
-                    # Keep run alive and emit a traceable step line for evaluator logs.
-                    print(f"[WARN] llm_call_failed task_id={expected_task_id} step={obs.step + 1} error={e}", file=sys.stderr)
-                    action = CureAiAction(task_id=observed_task_id, analysis="", fix="", root_cause="", done=False)
+        try:
+            with CureAiEnv(base_url=env_base_url).sync() as env:
+                reset_result = env.reset()
+                observed_task_id = reset_result.observation.task_id
+                if observed_task_id != expected_task_id:
+                    print(f"[WARN] expected_task={expected_task_id} observed_task={observed_task_id}", file=sys.stderr)
 
-                step_result = env.step(action)
-                obs = step_result.observation
-                reward = float(step_result.reward or 0.0)
-                total_reward += reward
+                obs = reset_result.observation
 
-                _emit_step(
-                    task_id=expected_task_id,
-                    step=obs.step,
-                    reward=reward,
-                    done=obs.done,
-                    root_cause=(action.root_cause or "na"),
-                )
+                for _step in range(obs.max_steps):
+                    try:
+                        action = _llm_step(client, config["model"], observed_task_id, obs)
+                    except Exception as e:
+                        # Keep run alive and emit a traceable step line for evaluator logs.
+                        print(f"[WARN] llm_call_failed task_id={expected_task_id} step={obs.step + 1} error={e}", file=sys.stderr)
+                        action = CureAiAction(task_id=observed_task_id, analysis="", fix="", root_cause="", done=False)
 
-                if obs.done:
-                    break
+                    step_result = env.step(action)
+                    obs = step_result.observation
+                    reward = _strict_open01(float(step_result.reward or 0.0))
+                    rewards.append(reward)
+                    task_steps = int(obs.step)
+                    task_done = bool(obs.done)
+                    step_error = getattr(obs, "last_action_error", None)
 
-            raw_score = _clamp01(total_reward / max_total_reward) if max_total_reward > 0 else 0.0
-            score = float(f"{_strict_open01(raw_score):.6f}")
-            _emit_end(task_id=expected_task_id, total_reward=total_reward, score=score, steps=obs.step, done=obs.done)
-            results.append(
-                {
-                    "task_id": expected_task_id,
-                    # Keep task score fields strictly open interval and parser-friendly decimals.
-                    "total_reward": score,
-                    "score": score,
-                    "task_score": score,
-                    "steps": obs.step,
-                }
-            )
+                    _emit_step(
+                        step=task_steps,
+                        action=action,
+                        reward=reward,
+                        done=task_done,
+                        error=step_error,
+                    )
+
+                    if task_done:
+                        break
+        except Exception as e:
+            task_error = str(e)
+            print(f"[WARN] task_failed task_id={expected_task_id} error={task_error}", file=sys.stderr)
+        finally:
+            _emit_end(success=(task_error is None), steps=task_steps, rewards=rewards)
+
+        avg_reward = (sum(rewards) / len(rewards)) if rewards else 0.0
+        score = float(f"{_strict_open01(avg_reward):.6f}")
+        results.append(
+            {
+                "task_id": expected_task_id,
+                # Keep task score fields strictly open interval and parser-friendly decimals.
+                "total_reward": score,
+                "score": score,
+                "task_score": score,
+                "steps": task_steps,
+                "done": task_done,
+            }
+        )
 
     summary = {
         "run_id": run_id,
