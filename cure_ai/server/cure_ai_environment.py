@@ -165,12 +165,14 @@ class CureAiEnvironment(Environment):
         self._state = State(episode_id="", step_count=0)
         self._task_cycle = ["task_easy", "task_medium", "task_hard"]
         self._task_id = self._task_cycle[0]
+        self._episode_done = False
 
     def reset(self) -> CureAiObservation:
         task_idx = _next_task_index()
         self._task_id = self._task_cycle[task_idx % len(self._task_cycle)]
         spec = TASK_SPECS[self._task_id]
         self._state = State(episode_id=str(uuid4()), step_count=0)
+        self._episode_done = False
 
         return CureAiObservation(
             task_id=spec.task_id,
@@ -196,6 +198,35 @@ class CureAiEnvironment(Environment):
         )
 
     def step(self, action: CureAiAction) -> CureAiObservation:
+        spec = TASK_SPECS[self._task_id]
+
+        # Some validators may continue stepping after done=True.
+        # Keep terminal-step rewards minimal so cumulative task score
+        # remains strictly within (0, 1).
+        if self._episode_done:
+            return CureAiObservation(
+                task_id=spec.task_id,
+                description=spec.description,
+                logs=list(spec.logs),
+                metrics=dict(spec.metrics),
+                step=self._state.step_count,
+                max_steps=self._max_steps,
+                reward=EPSILON_SCORE,
+                task_score=EPSILON_SCORE,
+                done=True,
+                message="Episode already done. Call reset() for a new task.",
+                reward_breakdown={
+                    "analysis_score": EPSILON_SCORE,
+                    "fix_score": EPSILON_SCORE,
+                    "root_cause_score": EPSILON_SCORE,
+                    "step_discount": 1.0 - EPSILON_SCORE,
+                    "unsafe_penalty": EPSILON_SCORE,
+                    "loop_penalty": EPSILON_SCORE,
+                    "total": EPSILON_SCORE,
+                    "task_score": EPSILON_SCORE,
+                },
+            )
+
         self._state = State(episode_id=self._state.episode_id or "", step_count=self._state.step_count + 1)
         raw_reward, feedback = _grade_action(self._task_id, action, self._state.step_count)
 
@@ -203,7 +234,7 @@ class CureAiEnvironment(Environment):
         reward = min(_strict_open01(raw_reward / upper_bound), MAX_STEP_REWARD)
 
         done = bool(action.done or self._state.step_count >= self._max_steps)
-        spec = TASK_SPECS[self._task_id]
+        self._episode_done = done
 
         return CureAiObservation(
             task_id=spec.task_id,
