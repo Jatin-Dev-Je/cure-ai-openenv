@@ -180,22 +180,20 @@ def main() -> None:
     results: List[Dict[str, float]] = []
     run_id = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     env_base_url = os.environ.get("ENV_BASE_URL", "http://localhost:8000")
-    expected_task_order = ["task_easy", "task_medium", "task_hard"]
     benchmark = "cure_ai"
-    for expected_task_id in expected_task_order:
-        rewards: List[float] = []
-        task_steps = 0
-        task_done = False
-        task_error: Optional[str] = None
+    with CureAiEnv(base_url=env_base_url).sync() as env:
+        for _ in range(3):
+            rewards: List[float] = []
+            task_steps = 0
+            task_done = False
+            task_error: Optional[str] = None
+            task_id_for_logs = "unknown"
 
-        _emit_start(task_name=expected_task_id, benchmark=benchmark, model=config["model"])
-
-        try:
-            with CureAiEnv(base_url=env_base_url).sync() as env:
+            try:
                 reset_result = env.reset()
                 observed_task_id = reset_result.observation.task_id
-                if observed_task_id != expected_task_id:
-                    print(f"[WARN] expected_task={expected_task_id} observed_task={observed_task_id}", file=sys.stderr)
+                task_id_for_logs = observed_task_id
+                _emit_start(task_name=task_id_for_logs, benchmark=benchmark, model=config["model"])
 
                 obs = reset_result.observation
 
@@ -204,7 +202,7 @@ def main() -> None:
                         action = _llm_step(client, config["model"], observed_task_id, obs)
                     except Exception as e:
                         # Keep run alive and emit a traceable step line for evaluator logs.
-                        print(f"[WARN] llm_call_failed task_id={expected_task_id} step={obs.step + 1} error={e}", file=sys.stderr)
+                        print(f"[WARN] llm_call_failed task_id={task_id_for_logs} step={obs.step + 1} error={e}", file=sys.stderr)
                         action = CureAiAction(task_id=observed_task_id, analysis="", fix="", root_cause="", done=False)
 
                     step_result = env.step(action)
@@ -225,31 +223,32 @@ def main() -> None:
 
                     if task_done:
                         break
-        except Exception as e:
-            task_error = str(e)
-            print(f"[WARN] task_failed task_id={expected_task_id} error={task_error}", file=sys.stderr)
-        finally:
-            # Keep task-level outputs parser-safe even on transient task failures.
-            if not rewards:
-                rewards = [0.10]
-            if task_steps <= 0:
-                task_steps = len(rewards)
+            except Exception as e:
+                task_error = str(e)
+                print(f"[WARN] task_failed task_id={task_id_for_logs} error={task_error}", file=sys.stderr)
+            finally:
+                # Keep task-level outputs parser-safe even on transient task failures.
+                if not rewards:
+                    rewards = [0.10]
+                if task_steps <= 0:
+                    task_steps = len(rewards)
+                if task_id_for_logs == "unknown":
+                    _emit_start(task_name=task_id_for_logs, benchmark=benchmark, model=config["model"])
+                _emit_end(success=True, steps=task_steps, rewards=rewards)
 
-            _emit_end(success=True, steps=task_steps, rewards=rewards)
-
-        avg_reward = (sum(rewards) / len(rewards)) if rewards else 0.10
-        score = float(f"{_strict_open01(avg_reward):.6f}")
-        results.append(
-            {
-                "task_id": expected_task_id,
-                # Keep task score fields strictly open interval and parser-friendly decimals.
-                "total_reward": score,
-                "score": score,
-                "task_score": score,
-                "steps": task_steps,
-                "done": task_done,
-            }
-        )
+            avg_reward = (sum(rewards) / len(rewards)) if rewards else 0.10
+            score = float(f"{_strict_open01(avg_reward):.6f}")
+            results.append(
+                {
+                    "task_id": task_id_for_logs,
+                    # Keep task score fields strictly open interval and parser-friendly decimals.
+                    "total_reward": score,
+                    "score": score,
+                    "task_score": score,
+                    "steps": task_steps,
+                    "done": task_done,
+                }
+            )
 
     summary = {
         "run_id": run_id,

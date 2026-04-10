@@ -1,6 +1,4 @@
 from dataclasses import dataclass
-from pathlib import Path
-import tempfile
 from typing import Dict, Tuple
 from uuid import uuid4
 
@@ -17,7 +15,6 @@ except ImportError:  # pragma: no cover
 # to 0.00 or 1.00 in downstream validators.
 EPSILON_SCORE = 1e-2
 SAFE_TASK_SCORE = 0.50
-TASK_INDEX_FILE = Path(tempfile.gettempdir()) / "cure_ai_task_index.txt"
 
 
 @dataclass
@@ -74,22 +71,6 @@ def _max_episode_reward_upper_bound(max_steps: int) -> float:
     # Hard upper bound on cumulative reward across max_steps actions.
     # This remains safe even if request/session state is not preserved.
     return float(max_steps)
-
-
-def _next_task_index() -> int:
-    """Return a persistent global task index across stateless env instances."""
-    try:
-        current = int(TASK_INDEX_FILE.read_text(encoding="utf-8").strip())
-    except Exception:
-        current = 0
-
-    next_value = current + 1
-    try:
-        TASK_INDEX_FILE.write_text(str(next_value), encoding="utf-8")
-    except Exception:
-        # Non-fatal fallback: at worst rotation restarts if file write fails.
-        pass
-    return current
 
 
 def _grade_action(task_id: str, action: CureAiAction, step_count: int) -> Tuple[float, str]:
@@ -165,12 +146,13 @@ class CureAiEnvironment(Environment):
         self._state = State(episode_id="", step_count=0)
         self._task_cycle = ["task_easy", "task_medium", "task_hard"]
         self._task_id = self._task_cycle[0]
+        self._task_idx = -1
         self._episode_done = False
         self._post_done_calls = 0
 
     def reset(self) -> CureAiObservation:
-        task_idx = _next_task_index()
-        self._task_id = self._task_cycle[task_idx % len(self._task_cycle)]
+        self._task_idx = (self._task_idx + 1) % len(self._task_cycle)
+        self._task_id = self._task_cycle[self._task_idx]
         spec = TASK_SPECS[self._task_id]
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self._episode_done = False
