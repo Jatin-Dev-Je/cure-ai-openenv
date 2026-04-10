@@ -166,6 +166,12 @@ def _strict_open01(value: float, epsilon: float = 1e-2) -> float:
     return max(epsilon, min(1.0 - epsilon, value))
 
 
+def _validator_safe_step_reward(value: float) -> float:
+    # External validators may compute task score from rounded STEP rewards.
+    # Cap per-step value so 5 rounded steps cannot sum to 1.00.
+    return min(_strict_open01(value), 0.19)
+
+
 def main() -> None:
     config = _load_env_config()
     client = _build_client(config["api_base"], config["hf_token"])
@@ -202,7 +208,7 @@ def main() -> None:
 
                     step_result = env.step(action)
                     obs = step_result.observation
-                    reward = _strict_open01(float(step_result.reward or 0.0))
+                    reward = _validator_safe_step_reward(float(step_result.reward or 0.0))
                     rewards.append(reward)
                     task_steps = int(obs.step)
                     task_done = bool(obs.done)
