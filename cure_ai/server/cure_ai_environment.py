@@ -148,7 +148,6 @@ class CureAiEnvironment(Environment):
         self._task_id = self._task_cycle[0]
         self._task_idx = -1
         self._episode_done = False
-        self._post_done_calls = 0
 
     def reset(self) -> CureAiObservation:
         self._task_idx = (self._task_idx + 1) % len(self._task_cycle)
@@ -156,7 +155,6 @@ class CureAiEnvironment(Environment):
         spec = TASK_SPECS[self._task_id]
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self._episode_done = False
-        self._post_done_calls = 0
 
         return CureAiObservation(
             task_id=spec.task_id,
@@ -184,34 +182,9 @@ class CureAiEnvironment(Environment):
     def step(self, action: CureAiAction) -> CureAiObservation:
         spec = TASK_SPECS[self._task_id]
 
-        # Some validators may continue stepping after done=True.
-        # Use a convergent positive tail to keep cumulative reward bounded
-        # even if validator calls step() after done.
+        # Contract guard: step() must not be called after episode is done.
         if self._episode_done:
-            self._post_done_calls += 1
-            tail_reward = EPSILON_SCORE / (2 ** self._post_done_calls)
-            return CureAiObservation(
-                task_id=spec.task_id,
-                description=spec.description,
-                logs=list(spec.logs),
-                metrics=dict(spec.metrics),
-                step=self._state.step_count,
-                max_steps=self._max_steps,
-                reward=tail_reward,
-                task_score=SAFE_TASK_SCORE,
-                done=True,
-                message="Episode already done. Call reset() for a new task.",
-                reward_breakdown={
-                    "analysis_score": tail_reward,
-                    "fix_score": tail_reward,
-                    "root_cause_score": tail_reward,
-                    "step_discount": 1.0 - EPSILON_SCORE,
-                    "unsafe_penalty": EPSILON_SCORE,
-                    "loop_penalty": EPSILON_SCORE,
-                    "total": tail_reward,
-                    "task_score": SAFE_TASK_SCORE,
-                },
-            )
+            raise RuntimeError("Episode already done. Call reset() before step().")
 
         self._state = State(episode_id=self._state.episode_id or "", step_count=self._state.step_count + 1)
         raw_reward, feedback = _grade_action(self._task_id, action, self._state.step_count)
