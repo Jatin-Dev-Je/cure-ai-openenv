@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from threading import Lock
 from typing import Dict, Tuple
 from uuid import uuid4
 
@@ -141,16 +142,23 @@ def _grade_action(task_id: str, action: CureAiAction, step_count: int) -> Tuple[
 class CureAiEnvironment(Environment):
     """OpenEnv-compatible environment implementing three incident-response tasks."""
 
+    # Some deployment/runtime paths may not preserve per-session environment state.
+    # Keep task rotation process-global so sequential resets still cover all tasks.
+    _reset_lock = Lock()
+    _global_reset_counter = 0
+
     def __init__(self, max_steps: int = 5):
         self._max_steps = max_steps
         self._state = State(episode_id="", step_count=0)
         self._task_cycle = ["task_easy", "task_medium", "task_hard"]
         self._task_id = self._task_cycle[0]
-        self._task_idx = -1
+        self._task_idx = 0
         self._episode_done = False
 
     def reset(self) -> CureAiObservation:
-        self._task_idx = (self._task_idx + 1) % len(self._task_cycle)
+        with self._reset_lock:
+            self._task_idx = self._global_reset_counter % len(self._task_cycle)
+            self.__class__._global_reset_counter += 1
         self._task_id = self._task_cycle[self._task_idx]
         spec = TASK_SPECS[self._task_id]
         self._state = State(episode_id=str(uuid4()), step_count=0)

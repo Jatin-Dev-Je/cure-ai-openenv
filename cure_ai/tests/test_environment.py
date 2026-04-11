@@ -7,7 +7,13 @@ def test_task_cycle_order() -> None:
     t1 = env.reset().task_id
     t2 = env.reset().task_id
     t3 = env.reset().task_id
-    assert [t1, t2, t3] == ["task_easy", "task_medium", "task_hard"]
+    cycle = ["task_easy", "task_medium", "task_hard"]
+    start_idx = cycle.index(t1)
+    assert [t1, t2, t3] == [
+        cycle[start_idx],
+        cycle[(start_idx + 1) % 3],
+        cycle[(start_idx + 2) % 3],
+    ]
 
 
 def test_reward_is_bounded() -> None:
