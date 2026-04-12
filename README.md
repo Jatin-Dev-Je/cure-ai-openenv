@@ -17,6 +17,9 @@ This repository contains the Cure AI OpenEnv project and deployment assets for h
 - Rubric Mapping: docs/RUBRIC_MAPPING.md
 - Demo Script (5-7 min): docs/DEMO_SCRIPT.md
 - Pre-Submit Checklist: docs/JUDGING_CHECKLIST.md
+- Executive One-Pager: docs/EXECUTIVE_ONE_PAGER.md
+- Architecture and Flow: docs/ARCHITECTURE.md
+- Judge FAQ: docs/JUDGE_FAQ.md
 
 ## Local Setup
 
